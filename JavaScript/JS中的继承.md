@@ -1,4 +1,4 @@
-> 手写寄生组合继承。
+> 重点掌握寄生组合继承
 
 ### 原型链继承
 
@@ -42,6 +42,32 @@ function P(){
 
 缺点也很明显，子类的实例无法访问父类的原型中定义的方法。
 
+### 组合继承
+
+组合继承就是将原型链继承和构造函数继承的两种继承方式组合起来。
+
+```js
+    function Parent(name){
+        this.name = name
+        this.weapon = 'power'
+    }    
+	Parent1.prototype.sayName = function (){
+        console.log(`this is ${this.weapon}`)
+    }
+    function Child(name, age){
+        this.name = name
+        //继承属性
+        Parent1.call(this, name)
+        this.age = age
+    }
+    //继承方法
+    Child.prototype = new Parent()
+```
+
+组合继承的问题综合了上述两种继承方式，避免了各自的缺点。但是组合继承的问题在于，将子类构造函数的原型重写为父类构造函数的实例，此时子类原型上的`constructor`不指向子类构造函数了，这是不符合直觉的。
+
+而且在子类创建实例的过程中调用了两次父类的构造函数，效率较低。
+
 ### 寄生组合继承
 
 最常见也是最为完美的一种实现继承的方式，综合上述两种继承的优点，同时避免了各自的缺点。
@@ -72,3 +98,32 @@ function P(){
 注意链接原型链的方式是使用`Object.create`，以及最后还需要将子类的原型的构造器指定为子类本身，负责构造器就是父类了，这是不符合继承的本意的。
 
 在`ES6`中的`class`的`extends`实现的继承中，经过`babel`转义之后发现，`class`类的继承也是基于寄生组合继承来实现的。
+
+### 原型式继承
+
+原型式继承适用于需要对象间共享信息，但是不用额外创建构造函数的情况。
+
+```js
+function object(obj){
+        function Fn(){}
+        Fn.prototype = obj
+        return new Fn()
+    }
+```
+
+`ES5`中提供了原生的`Object.create`方法支持这种继承方式。
+
+### 寄生式继承
+
+寄生式继承是将原对象使用`object`构造函数进行包装。利用某种方式增强这个对象后返回。
+
+```js
+function createAnother(original){
+	let clone = object(original) //以original为基准创建一个新对象
+	clone.sayHi = function(){ //增强这个对象
+		console.log("Hi")
+	}
+	return clone //返回
+}
+```
+
