@@ -2,6 +2,37 @@
 
 之前参加阿里巴巴的训练营的时候再团队合作的时候接触过`ESLint`，但是没有系统的学习过。简单来说就是一个代码检查工具，帮助我们在开发阶段就发现一些代码中的错误。
 
+首先安转`ESLint`和对应的插件，使用一些比较有名的`ESLint`配置，以`standard`为例。
+
+```
+npm i -D eslint eslint-webpack-plugin 
+npm i -D eslint-config-standard
+```
+
+然后在`webpack`的配置文件中声明新的插件。
+
+```js
+const ESLintPlugin = require('eslint-webpack-plugin')
+
+module.exports = {
+...
+plugins: [
+	new ESLintPlugin()
+]
+}
+```
+
+创建`.eslintrc`文件并输入代码。
+
+```js
+//.eslintrc
+{
+	"extends": "standard"
+}
+```
+
+然后在打包阶段如果我们书写的代码不符合`ESLint`的规范就会在日志中报错。这是统一代码风格的一种很好的方法。
+
 ### 打包组件和第三方库
 
 以打包一个字符串相加的函数为例
