@@ -24,3 +24,164 @@
 
 在上述整个流程中，`webpack`会在特定的时间广播特定的时间，插件在监听到感兴趣的事件后就会开始执行特定流程。插件能够调用`webpack`提供的`API`改变`webpack`的运行结果。
 
+## 从代码看构建流程
+
+在掘金上看到一篇很清晰的关于`webpack`打包流程的分析，这里自己整理了一下。
+
+```
+|-- xrikispack
+    |-- dist
+    |-- lib
+    |   |-- compiler.js
+    |   |-- index.js
+    |   |-- parser.js
+    |-- src
+    |   |-- hello.js
+    |   |-- index.js
+    |-- xrikis.config.js
+    |-- package.json
+```
+
+`src`目录下就是项目的源代码，包含模块间的引用。`xrikis.config.js`就是对应的打包工具的配置文件，只配置基本的入口和出口即可。`lib`下的`compiler.js parer.js`就是打包工具的核心文件。
+
+先来看看`parser.js`。
+
+```js
+const fs = require("fs");
+const parser = require("@babel/parser");
+const traverse = require("@babel/traverse").default;
+const { transformFromAst } = require("@babel/core");
+module.exports = {
+    // 解析我们的代码生成AST抽象语法树
+    getAST: (path) => {
+        const source = fs.readFileSync(path, "utf-8");
+        return parser.parse(source, {
+            sourceType: "module", //表示我们要解析的是ES模块
+        });
+    },
+    // 对AST节点进行递归遍历
+    getDependencies: (ast) => {
+        const dependencies = [];
+        traverse(ast, {
+            ImportDeclaration: ({ node }) => {
+                dependencies.push(node.source.value);
+            },
+        });
+        return dependencies;
+    },
+    // 将获得的ES6的AST转化成ES5
+    transform: (ast) => {
+        const { code } = transformFromAst(ast, null, {
+            presets: ["env"],
+        });
+        return code;
+    },
+};
+```
+
+可以发现这是一个工具文件，它提供了三个方法。
+
+- `getAST`将代码转换为抽象语法树。
+- `getDependencies`递归遍历`AST`的节点，收集节点依赖的模块放入`dependencies`数组。
+- `transform`将抽象语法树转换为代码，同时进行语法降级。
+
+然后就是最重要的`compiler.js`文件。
+
+```js
+const { getAST, getDependencies, transform } = require("./parser");
+const path = require("path");
+const fs = require("fs");
+
+module.exports = class Compiler {
+    constructor(options) {
+        const { entry, output } = options;
+        this.entry = entry;
+        this.output = output;
+        this.modules = [];
+    }
+    // 开启编译
+    run() {
+        const entryModule = this.buildModule(this.entry, true);
+        this.modules.push(entryModule);
+        this.modules.map((_module) => {
+            _module.dependencies.map((dependency) => {
+                this.modules.push(this.buildModule(dependency));
+            });
+        });
+        // console.log(this.modules);
+        this.emitFiles();
+    }
+    // 构建模块相关
+    buildModule(filename, isEntry) {
+        let ast;
+        if (isEntry) {
+            ast = getAST(filename);
+        } else {
+            const absolutePath = path.join(process.cwd(), "./src", filename);
+            ast = getAST(absolutePath);
+        }
+
+        return {
+            filename, // 文件名称
+            dependencies: getDependencies(ast), // 依赖列表
+            transformCode: transform(ast), // 转化后的代码
+        };
+    }
+    // 输出文件
+    emitFiles() {
+        const outputPath = path.join(this.output.path, this.output.filename);
+        let modules = "";
+        this.modules.map((_module) => {
+            modules += `'${_module.filename}' : function(require, module, exports) {${_module.transformCode}},`;
+        });
+
+        const bundle = `
+        (function(modules) {
+          function require(fileName) {
+            const fn = modules[fileName];
+            const module = { exports:{}};
+            fn(require, module, module.exports)
+            return module.exports
+          }
+          require('${this.entry}')
+        })({${modules}})
+    `;
+
+        fs.writeFileSync(outputPath, bundle, "utf-8");
+    }
+};
+```
+
+依然先从整体的角度看，`compiler`中定义了三个方法。
+
+- `buildModule`模块构建方法，返回一个对象。包含模块名称，模块的依赖，以及模块转换之后的代码。
+- `emitFiles`输出方法。将文件进行输出并写入配置的出口中。
+- `run`启动构建方法。从入口文件开始读取。
+
+`run`方法初始参数为入口文件，然后递归遍历，寻找入口文件的所有直接和间接依赖并且调用`buildModule`方法对每一个模块进行构建。
+
+然后调用`emitFiles`方法输出文件。`webpack`打包之后的文件是一个`IIFE`，传入的参数为`modules`数组，该数组的每一项都是一个模块初始化函数
+
+```js
+(function(module, exports, __webpack_require__) {
+  ...
+})
+```
+
+`__webpack_require__`用于加载模块，返回`module.exports`。最后将文件写入对应的目录。
+
+`index.js`中就是读取配置文件和传入初始化参数的操作了。
+
+```js
+const Compiler = require("./compiler");
+const options = require("../xrikispack.config");
+
+new Compiler(options).run();
+```
+
+总结一下代码里面的构建流程。
+
+- `run`启动构建，调用`buildModule`方法并传入配置文件中的入口文件作为参数。
+- `buildModule`调用`paeser`的三个方法，将一个包含模块名，模块依赖的其他模块和模块经过转化后的代码的对象放入全局的`modules`数组中。
+- `run`遍历`modules`数组，发现模块还依赖了其他模块，对这些被依赖的模块重复执行第2步。得到一个包含所有项目中依赖模块的`modules`数组。**`buildModule`**的执行过程就是`loader`的调用时机。
+- `run`调用`emitFiles`方法。遍历`modules`数组，为每一个模块生成初始化函数，放入一个数组中。最终将代码打包成一个`IIFE`，这个立即执行函数的参数就是刚才包含所有模块初始化函数的数组。
